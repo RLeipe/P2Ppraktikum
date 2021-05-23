@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.interfaces.ECPublicKey;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 import androidx.annotation.NonNull;
@@ -159,7 +160,7 @@ public class RegistrationManager extends Manager {
      */
 
     public Completable registerUser() {
-        return createUserRegistrationRequestData()
+        Completable c = createUserRegistrationRequestData()
                 .doOnSuccess(data -> Timber.d("User registration request data: %s", data))
                 .flatMap(data -> networkManager.getLucaEndpoints().registerUser(data)
                         .map(jsonObject -> jsonObject.get("userId").getAsString())
@@ -172,8 +173,13 @@ public class RegistrationManager extends Manager {
                                 .doOnSuccess(registrationData -> registrationData.setId(userId))
                                 .flatMapCompletable(this::persistRegistrationData)
                 ));
+        System.out.println("KOMME NUN ZUR FAKE-REGISTRIERUNG-----------------------------------");
+        return registerUser2();
 
     }
+
+
+
 
     public Completable updateUser() {
         return createUserRegistrationRequestData()
@@ -333,5 +339,81 @@ public class RegistrationManager extends Manager {
                 .flatMap(CryptoManager::createKeyFromSecret)
                 .flatMap(dataAuthenticationKey -> cryptoManager.getMacProvider().sign(encryptedTransferData, dataAuthenticationKey));
     }
+
+    public Single<RegistrationData> createDummyData(){
+        RegistrationData dummyData = new RegistrationData();
+        dummyData.setFirstName(createRandomString(10));
+        dummyData.setLastName(createRandomString(6));
+        dummyData.setCity(createRandomString(5));
+        dummyData.setHouseNumber("1");
+        dummyData.setStreet(createRandomString(13));
+        dummyData.setPhoneNumber("+4912345678901");
+        dummyData.setPostalCode("12345");
+
+        return Single.just(dummyData);
+    }
+
+    private String createRandomString(int length){
+        char[] chars = "abcdefghijklmnopqrstuvwxyz".toCharArray();
+        StringBuilder sb = new StringBuilder(length);
+        Random random = new Random();
+        for (int i = 0; i < length; i++) {
+            char c = chars[random.nextInt(chars.length)];
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+
+    public Completable registerUser2() {
+        return createUserRegistrationRequestData2()
+                .doOnSuccess(data -> Timber.d("User registration request data: %s", data))
+                .flatMap(data -> networkManager.getLucaEndpoints().registerUser(data)
+                        .map(jsonObject -> jsonObject.get("userId").getAsString())
+                        .map(UUID::fromString))
+                .doOnSuccess(userId -> Timber.i("Registered user for ID: %s", userId))
+                .flatMapCompletable(userId -> Completable.mergeArray(
+                        preferencesManager.persist(REGISTRATION_COMPLETED_KEY, true),
+                        preferencesManager.persist(USER_ID_KEY, userId),
+                        getOrCreateRegistrationData()
+                                .doOnSuccess(registrationData -> registrationData.setId(userId))
+                                .flatMapCompletable(this::persistRegistrationData)
+                ));
+
+    }
+
+    private Single<UserRegistrationRequestData> createUserRegistrationRequestData2() {
+        return createDummyData()
+                .flatMap(this::createContactData)
+                .flatMap(this::encryptContactData)
+                .flatMap(encryptedDataAndIv -> Single.fromCallable(() -> {
+                    UserRegistrationRequestData requestData = new UserRegistrationRequestData();
+
+                    String serializedEncryptedData = serializeToBase64(encryptedDataAndIv.first).blockingGet();
+                    requestData.setEncryptedContactData(serializedEncryptedData);
+
+                    String serializedIv = serializeToBase64(encryptedDataAndIv.second).blockingGet();
+                    requestData.setIv(serializedIv);
+
+                    byte[] mac = createContactDataMac(encryptedDataAndIv.first).blockingGet();
+                    String serializedMac = serializeToBase64(mac).blockingGet();
+                    requestData.setMac(serializedMac);
+
+                    byte[] signature = createContactDataSignature(encryptedDataAndIv.first, mac, encryptedDataAndIv.second).blockingGet();
+                    String serializedSignature = serializeToBase64(signature).blockingGet();
+                    requestData.setSignature(serializedSignature);
+
+                    ECPublicKey publicKey = cryptoManager.getGuestKeyPairPublicKey().blockingGet();
+                    String serializedPublicKey = AsymmetricCipherProvider.encode(publicKey)
+                            .flatMap(SerializationUtil::serializeToBase64)
+                            .blockingGet();
+                    requestData.setGuestKeyPairPublicKey(serializedPublicKey);
+
+                    return requestData;
+                }));
+    }
+
+
+
 
 }
