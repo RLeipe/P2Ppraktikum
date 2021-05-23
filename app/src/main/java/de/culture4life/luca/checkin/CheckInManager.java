@@ -797,4 +797,13 @@ public class CheckInManager extends Manager {
         this.meetingAdditionalData = meetingAdditionalData;
     }
 
+    public Completable checkIn2(@NonNull UUID scannerId, @NonNull QrCodeData qrCodeData) {
+        return (generateCheckInData(qrCodeData, scannerId)
+                        .flatMapCompletable(checkInRequestData -> networkManager.getLucaEndpoints().checkIn(checkInRequestData)))
+                .andThen(getCheckInDataFromBackend()
+                        .switchIfEmpty(Single.error(new IllegalStateException("No check-in data available at backend after checking in"))))
+                .flatMapCompletable(this::processCheckIn);
+    }
+
+
 }
