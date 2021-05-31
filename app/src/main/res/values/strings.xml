@@ -156,7 +156,7 @@
     <string name="meeting_duration_heading">Duration</string>
     <string name="meeting_members_heading">Participants</string>
     <string name="meeting_members_info"><xliff:g example="2/4" id="count">%1$s</xliff:g>\n\nChecked in:\n<xliff:g example="- John Doe\n- Jane Doe" id="checkedIn">%2$s</xliff:g>\n\nChecked out:\n<xliff:g example="- John Doe\n- Jane Doe" id="checkedOut">%3$s</xliff:g></string>
-    <string name="meeting_create_action">Create a private meeting</string>
+    <string name="meeting_create_action">Spamme die App zu</string>
     <string name="meeting_create_modal_action">Start</string>
     <string name="meeting_create_modal_heading">Set up a private meeting</string>
     <string name="meeting_create_modal_description">Do you want to start a private meeting now?\n\nWhen friends and family check into your private meeting, their first and last names will be shown in your app. They will also see your first and last name in their app.\n\nPrivate meetings are used as reminders and won\'t be shared with health authorities.</string>
