@@ -19,7 +19,7 @@ public class QrCodeData {
     }
 
     private static final int TYPE_IOS = 0;
-    private static final int TYPE_ANDROID = 1;
+    public static final int TYPE_ANDROID = 1;
     private static final int TYPE_STATIC = 2;
 
     private byte version = VERSION_CURRENT;

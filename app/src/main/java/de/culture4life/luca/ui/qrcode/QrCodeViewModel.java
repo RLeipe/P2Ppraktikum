@@ -211,7 +211,7 @@ public class QrCodeViewModel extends BaseViewModel implements ImageAnalysis.Anal
                         .doFinally(() -> updateAsSideEffect(isLoading, false)));
     }
 
-    private Single<QrCodeData> generateQrCodeData() {
+    public Single<QrCodeData> generateQrCodeData() {
         return Single.just(new QrCodeData())
                 .flatMap(qrCodeData -> cryptoManager.getTraceIdWrapper(userId)
                         .flatMapCompletable(userTraceIdWrapper -> Completable.mergeArray(

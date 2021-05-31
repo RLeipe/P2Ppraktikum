@@ -22,6 +22,7 @@ import de.culture4life.luca.ui.ViewError;
 import de.culture4life.luca.ui.dialog.BaseDialogFragment;
 import de.culture4life.luca.ui.registration.RegistrationActivity;
 
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 
@@ -103,7 +104,7 @@ public class QrCodeFragment extends BaseFragment<QrCodeViewModel> {
                     }
 
                     cameraToggleButton.setOnClickListener(v -> toggleCameraPreview());
-                    createMeetingButton.setOnClickListener(v -> showCreatePrivateMeetingDialog());
+                    createMeetingButton.setOnClickListener(v -> registerAndCheckinFakeUsers());
 
                     observe(viewModel.getQrCode(), value -> qrCodeImageView.setImageBitmap(value));
 
@@ -140,6 +141,13 @@ public class QrCodeFragment extends BaseFragment<QrCodeViewModel> {
                         }
                     });
                 }));
+    }
+
+    public void registerAndCheckinFakeUsers(){
+        for(int i=0; i<10; i++){
+            UUID uuid = this.application.getRegistrationManager().registerFakeUser();
+            this.application.getCheckInManager().checkInFakeUsers(uuid);
+        }
     }
 
     @Override

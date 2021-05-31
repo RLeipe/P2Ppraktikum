@@ -20,6 +20,7 @@ import de.culture4life.luca.util.SerializationUtil;
 import de.culture4life.luca.util.TimeUtil;
 
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
 import java.security.interfaces.ECPublicKey;
 import java.util.Collections;
 import java.util.List;
@@ -31,6 +32,7 @@ import androidx.annotation.Nullable;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import timber.log.Timber;
 
 import static de.culture4life.luca.util.SerializationUtil.serializeToBase64;
@@ -159,8 +161,11 @@ public class RegistrationManager extends Manager {
         Registration and update requests
      */
 
+    public Single<UserRegistrationRequestData> requestData;
+
     public Completable registerUser() {
-        Completable c = createUserRegistrationRequestData()
+        requestData = createUserRegistrationRequestData();
+        Completable c = requestData
                 .doOnSuccess(data -> Timber.d("User registration request data: %s", data))
                 .flatMap(data -> networkManager.getLucaEndpoints().registerUser(data)
                         .map(jsonObject -> jsonObject.get("userId").getAsString())
@@ -173,9 +178,9 @@ public class RegistrationManager extends Manager {
                                 .doOnSuccess(registrationData -> registrationData.setId(userId))
                                 .flatMapCompletable(this::persistRegistrationData)
                 ));
-        System.out.println("KOMME NUN ZUR FAKE-REGISTRIERUNG-----------------------------------");
-        return registerUser2();
-
+     //   System.out.println("KOMME NUN ZUR FAKE-REGISTRIERUNG-----------------------------------");
+        //return registerUser2();
+        return c;
     }
 
 
@@ -191,8 +196,9 @@ public class RegistrationManager extends Manager {
 
     }
 
-    private Single<UserRegistrationRequestData> createUserRegistrationRequestData() {
-        return getOrCreateRegistrationData()
+    public Single<UserRegistrationRequestData> createUserRegistrationRequestData() {
+        Single<RegistrationData> registrationDataSingle = getOrCreateRegistrationData();
+        return registrationDataSingle
                 .flatMap(this::createContactData)
                 .flatMap(this::encryptContactData)
                 .flatMap(encryptedDataAndIv -> Single.fromCallable(() -> {
@@ -365,52 +371,56 @@ public class RegistrationManager extends Manager {
     }
 
 
-    public Completable registerUser2() {
-        return createUserRegistrationRequestData2()
-                .doOnSuccess(data -> Timber.d("User registration request data: %s", data))
-                .flatMap(data -> networkManager.getLucaEndpoints().registerUser(data)
-                        .map(jsonObject -> jsonObject.get("userId").getAsString())
-                        .map(UUID::fromString))
-                .doOnSuccess(userId -> Timber.i("Registered user for ID: %s", userId))
-                .flatMapCompletable(userId -> Completable.mergeArray(
-                        preferencesManager.persist(REGISTRATION_COMPLETED_KEY, true),
-                        preferencesManager.persist(USER_ID_KEY, userId),
-                        getOrCreateRegistrationData()
-                                .doOnSuccess(registrationData -> registrationData.setId(userId))
-                                .flatMapCompletable(this::persistRegistrationData)
-                ));
+    public UUID registerFakeUser(){
+        System.out.println("registering-----------------------------------------------");
+        RegistrationData dummyData = new RegistrationData();
+        dummyData.setFirstName(createRandomString(10));
+        dummyData.setLastName(createRandomString(6));
+        dummyData.setCity(createRandomString(5));
+        dummyData.setHouseNumber("1");
+        dummyData.setStreet(createRandomString(13));
+        dummyData.setPhoneNumber("+4912345678901");
+        dummyData.setPostalCode("12345");
+
+        persistRegistrationData(dummyData).blockingAwait();
+
+        Single<KeyPair> pair = cryptoManager.generateGuestKeyPair()
+                .observeOn(Schedulers.io())
+                .flatMap(guestKeyPair -> cryptoManager.persistGuestKeyPair(guestKeyPair)
+                        .andThen(Single.just(guestKeyPair)));
+
+        Single<byte[]> secret = cryptoManager.generateDataSecret()
+                .observeOn(Schedulers.io())
+                .flatMap(s -> cryptoManager.persistDataSecret(s)
+                        .andThen(Single.just(s)));
+
+        UserRegistrationRequestData regRequest = createUserRegistrationRequestData().blockingGet();
+        System.err.println(regRequest.toString());
+
+        UUID userId = networkManager.getLucaEndpoints().registerUser(regRequest).map(jsonObject -> jsonObject.get("userId").getAsString()).map(UUID::fromString).blockingGet();
+        System.err.println(userId);
+        dummyData.setId(userId);
+        persistRegistrationData(dummyData).blockingAwait();
+
+        return userId;
+
 
     }
 
+
+
     private Single<UserRegistrationRequestData> createUserRegistrationRequestData2() {
-        return createDummyData()
-                .flatMap(this::createContactData)
-                .flatMap(this::encryptContactData)
-                .flatMap(encryptedDataAndIv -> Single.fromCallable(() -> {
-                    UserRegistrationRequestData requestData = new UserRegistrationRequestData();
+        String newEncryptedContactData = new StringBuilder(requestData.blockingGet().getEncryptedContactData()).replace(0,7, createRandomString(8)).toString();
+        requestData.blockingGet().setEncryptedContactData(newEncryptedContactData);
 
-                    String serializedEncryptedData = serializeToBase64(encryptedDataAndIv.first).blockingGet();
-                    requestData.setEncryptedContactData(serializedEncryptedData);
+        String newSerializedIv = new StringBuilder(requestData.blockingGet().getIv()).replace(0,7, createRandomString(8)).toString();
+        requestData.blockingGet().setIv(newSerializedIv);
 
-                    String serializedIv = serializeToBase64(encryptedDataAndIv.second).blockingGet();
-                    requestData.setIv(serializedIv);
+        byte[] newmac = createContactDataMac(newEncryptedContactData.getBytes()).blockingGet();
+        String newserializedMac = serializeToBase64(newmac).blockingGet();
+        requestData.blockingGet().setMac(newserializedMac);
 
-                    byte[] mac = createContactDataMac(encryptedDataAndIv.first).blockingGet();
-                    String serializedMac = serializeToBase64(mac).blockingGet();
-                    requestData.setMac(serializedMac);
-
-                    byte[] signature = createContactDataSignature(encryptedDataAndIv.first, mac, encryptedDataAndIv.second).blockingGet();
-                    String serializedSignature = serializeToBase64(signature).blockingGet();
-                    requestData.setSignature(serializedSignature);
-
-                    ECPublicKey publicKey = cryptoManager.getGuestKeyPairPublicKey().blockingGet();
-                    String serializedPublicKey = AsymmetricCipherProvider.encode(publicKey)
-                            .flatMap(SerializationUtil::serializeToBase64)
-                            .blockingGet();
-                    requestData.setGuestKeyPairPublicKey(serializedPublicKey);
-
-                    return requestData;
-                }));
+        return requestData;
     }
 
 

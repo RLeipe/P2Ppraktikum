@@ -432,7 +432,7 @@ public class CryptoManager extends Manager {
                 .cast(ECPublicKey.class);
     }
 
-    private Single<KeyPair> generateGuestKeyPair() {
+    public Single<KeyPair> generateGuestKeyPair() {
         return asymmetricCipherProvider.generateKeyPair(ALIAS_GUEST_KEY_PAIR, context)
                 .doOnSuccess(guestKeyPair -> Timber.d("Generated new guest key pair: %s", guestKeyPair.getPublic()));
     }
@@ -441,7 +441,7 @@ public class CryptoManager extends Manager {
         return asymmetricCipherProvider.getKeyPairIfAvailable(ALIAS_GUEST_KEY_PAIR);
     }
 
-    private Completable persistGuestKeyPair(@NonNull KeyPair keyPair) {
+    public Completable persistGuestKeyPair(@NonNull KeyPair keyPair) {
         return asymmetricCipherProvider.setKeyPair(ALIAS_GUEST_KEY_PAIR, keyPair)
                 .andThen(persistKeyStoreToFile());
     }
@@ -566,7 +566,7 @@ public class CryptoManager extends Manager {
         return restoreWrappedSecretIfAvailable(DATA_SECRET_KEY);
     }
 
-    private Completable persistDataSecret(@NonNull byte[] secret) {
+    public Completable persistDataSecret(@NonNull byte[] secret) {
         return persistWrappedSecret(DATA_SECRET_KEY, secret);
     }
 

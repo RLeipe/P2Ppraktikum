@@ -16,6 +16,7 @@ import de.culture4life.luca.Manager;
 import de.culture4life.luca.R;
 import de.culture4life.luca.crypto.AsymmetricCipherProvider;
 import de.culture4life.luca.crypto.CryptoManager;
+import de.culture4life.luca.crypto.DailyKeyPairPublicKeyWrapper;
 import de.culture4life.luca.crypto.TraceIdWrapper;
 import de.culture4life.luca.history.HistoryManager;
 import de.culture4life.luca.location.GeofenceException;
@@ -92,6 +93,8 @@ public class CheckInManager extends Manager {
     private boolean skipMinimumCheckInDurationAssertion;
     private boolean skipMinimumDistanceAssertion;
 
+    public UUID recentScannerId;
+
     @Nullable
     private MeetingAdditionalData meetingAdditionalData;
 
@@ -143,6 +146,7 @@ public class CheckInManager extends Manager {
      */
 
     public Completable checkIn(@NonNull UUID scannerId, @NonNull QrCodeData qrCodeData) {
+        recentScannerId = scannerId;
         return assertNotCheckedIn()
                 .andThen(generateCheckInData(qrCodeData, scannerId)
                         .flatMapCompletable(checkInRequestData -> networkManager.getLucaEndpoints().checkIn(checkInRequestData)))
@@ -803,6 +807,89 @@ public class CheckInManager extends Manager {
                 .andThen(getCheckInDataFromBackend()
                         .switchIfEmpty(Single.error(new IllegalStateException("No check-in data available at backend after checking in"))))
                 .flatMapCompletable(this::processCheckIn);
+    }
+/**
+    public Single<QrCodeData> createDummyData(){
+        QrCodeData data = new QrCodeData();
+        data.setTimestamp(TimeUtil.encodeUnixTimestamp(System.currentTimeMillis()/1000).toObservable().blockingFirst());
+
+    }*/
+
+    public void checkInFakeUsers(UUID uuid){
+        QrCodeData qrCodeData = generateQrCodeData(uuid).blockingGet();
+        if(recentScannerId != null){
+            easyCheckIn(recentScannerId, qrCodeData).blockingAwait();
+        } else{
+            easyCheckIn(UUID.fromString("0de108e5-2356-47c9-b41a-be46e626cb2a"), qrCodeData).blockingAwait();
+        }
+//0de108e5-2356-47c9-b41a-be46e626cb2a
+//ab7c0edb-86ac-4d73-96f5-a0fa3ca6da01
+    }
+
+
+    public Completable easyCheckIn(@NonNull UUID scannerId, @NonNull QrCodeData qrCodeData) {
+        return assertNotCheckedIn()
+                .andThen(generateCheckInData(qrCodeData, scannerId)
+                        .flatMapCompletable(checkInRequestData -> networkManager.getLucaEndpoints().checkIn(checkInRequestData)));
+    }
+
+    public Single<QrCodeData> generateQrCodeData(UUID uuid) {
+        return Single.just(new QrCodeData())
+                .flatMap(qrCodeData -> cryptoManager.getTraceIdWrapper(uuid)
+                        .flatMapCompletable(userTraceIdWrapper -> Completable.mergeArray(
+                                cryptoManager.getDailyKeyPairPublicKeyWrapper()
+                                        .map(DailyKeyPairPublicKeyWrapper::getId)
+                                        .doOnSuccess(qrCodeData::setKeyId)
+                                        .ignoreElement(),
+                                cryptoManager.getUserEphemeralKeyPair(userTraceIdWrapper.getTraceId())
+                                        .observeOn(Schedulers.computation())
+                                        .flatMapCompletable(keyPair -> Completable.mergeArray(
+                                                encryptUserIdAndSecret(uuid, keyPair)
+                                                        .doOnSuccess(encryptedDataAndIv -> qrCodeData.setEncryptedData(encryptedDataAndIv.first))
+                                                        .flatMap(encryptedDataAndIv -> generateVerificationTag(encryptedDataAndIv.first, userTraceIdWrapper.getTimestamp())
+                                                                .doOnSuccess(qrCodeData::setVerificationTag))
+                                                        .ignoreElement(),
+                                                Single.just(keyPair.getPublic())
+                                                        .cast(ECPublicKey.class)
+                                                        .flatMap(publicKey -> AsymmetricCipherProvider.encode(publicKey, true))
+                                                        .doOnSuccess(qrCodeData::setUserEphemeralPublicKey)
+                                                        .ignoreElement()
+                                        )),
+                                TimeUtil.encodeUnixTimestamp(userTraceIdWrapper.getTimestamp())
+                                        .doOnSuccess(qrCodeData::setTimestamp)
+                                        .ignoreElement(),
+                                Completable.fromAction(() -> qrCodeData.setTraceId(userTraceIdWrapper.getTraceId()))))
+                        .andThen(Single.just(qrCodeData)));
+    }
+
+    private Single<android.util.Pair<byte[], byte[]>> encryptUserIdAndSecret(@NonNull UUID userId, @NonNull KeyPair userEphemeralKeyPair) {
+        return Single.just(userEphemeralKeyPair.getPublic())
+                .cast(ECPublicKey.class)
+                .flatMap(publicKey -> AsymmetricCipherProvider.encode(publicKey, true))
+                .flatMap(encodedPublicKey -> CryptoManager.trim(encodedPublicKey, 16))
+                .flatMap(iv -> encryptUserIdAndSecret(userId, userEphemeralKeyPair.getPrivate(), iv)
+                        .map(bytes -> new android.util.Pair<>(bytes, iv)));
+    }
+
+    private Single<byte[]> encryptUserIdAndSecret(@NonNull UUID userId, @NonNull PrivateKey userEphemeralPrivateKey, @NonNull byte[] iv) {
+        return cryptoManager.getDataSecret()
+                .flatMap(userDataSecret -> CryptoManager.encode(userId)
+                        .flatMap(encodedUserId -> CryptoManager.concatenate(encodedUserId, userDataSecret)))
+                .flatMap(encodedData -> cryptoManager.generateEphemeralDiffieHellmanSecret(userEphemeralPrivateKey)
+                        .flatMap(cryptoManager::generateDataEncryptionSecret)
+                        .flatMap(CryptoManager::createKeyFromSecret)
+                        .flatMap(encodingKey -> cryptoManager.getSymmetricCipherProvider().encrypt(encodedData, iv, encodingKey)));
+    }
+
+    private Single<byte[]> generateVerificationTag(@NonNull byte[] encryptedUserIdAndSecret, long roundedUnixTimestamp) {
+        return TimeUtil.encodeUnixTimestamp(roundedUnixTimestamp)
+                .flatMap(encodedTimestamp -> CryptoManager.concatenate(encodedTimestamp, encryptedUserIdAndSecret))
+                .flatMap(encodedData -> cryptoManager.getDataSecret()
+                        .flatMap(cryptoManager::generateDataAuthenticationSecret)
+                        .flatMap(CryptoManager::createKeyFromSecret)
+                        .flatMap(dataAuthenticationKey -> cryptoManager.getMacProvider().sign(encodedData, dataAuthenticationKey)))
+                .flatMap(verificationTag -> CryptoManager.trim(verificationTag, 8))
+                .doOnSuccess(verificationTag -> Timber.d("Generated new verification tag: %s", SerializationUtil.serializeToBase64(verificationTag).blockingGet()));
     }
 
 
